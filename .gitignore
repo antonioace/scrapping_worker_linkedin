@@ -8,6 +8,8 @@ reports/
 .env.*
 !.env.example
 secrets/
+*cookies*.json
+!linkedin.cookies.example.json
 *-adminsdk-*.json
 *service-account*.json
 *.pem

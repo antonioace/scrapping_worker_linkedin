@@ -13,7 +13,7 @@ RUN pip install -r requirements.txt \
     && useradd --uid 10001 --gid scraper --create-home scraper \
     && mkdir -p /data \
     && chown scraper:scraper /data
-COPY api_sync.py linkedin_jobs.py ./
+COPY api_sync.py linkedin_jobs.py linkedin_cookies.py ./
 USER scraper
 ENTRYPOINT ["python", "linkedin_jobs.py"]
 CMD ["--require-session", "--profile", "/data/linkedin-profile", "--output", "/data/reports"]

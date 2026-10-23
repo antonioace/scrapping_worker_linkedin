@@ -5,16 +5,102 @@ Guía paso a paso para ejecutar y probar los tres proyectos:
 
 Script en Python con Playwright. Consulta LinkedIn cada **300 segundos (5 minutos)**
 y genera reportes locales. Usa tu propia sesión, guardada en un perfil exclusivo de
-este proyecto; no requiere escribir contraseñas ni cookies en el código.
+este proyecto, o importada desde un JSON privado de cookies; no requiere escribir
+contraseñas ni cookies en el código.
+
+## Usar tu sesión mediante cookies JSON
+
+Puedes reutilizar una sesión propia válida sin abrir el login del scraper.
+Esto simplifica el acceso; la consulta sigue usando Chromium y no se hace más
+rápida por importar cookies. Una cuenta restringida o una sesión revocada no se
+recuperan copiando cookies. El monitor se detiene ante verificación o bloqueo.
+
+En este PC está creado `linkedin.cookies.json` para rellenarlo. En otro equipo,
+copia `linkedin.cookies.example.json` a `linkedin.cookies.json` **solo si no existe**.
+El archivo real está excluido de Git y de la imagen Docker; la plantilla pública
+contiene únicamente un valor vacío.
+
+1. Abre LinkedIn en tu navegador habitual con tu sesión iniciada.
+2. En DevTools (`F12`), entra en **Application / Aplicación → Storage /
+   Almacenamiento → Cookies → https://www.linkedin.com**. En Firefox, usa la
+   pestaña Almacenamiento. Copia el valor completo de `li_at` al campo `value`
+   del JSON. Al ser HttpOnly no se obtiene con `document.cookie`.
+3. Mantén `name`, `domain` y `path` como aparecen en la plantilla. Si dispones
+   de un export JSON de las cookies de LinkedIn, también puedes usarlo: acepta
+   una lista de cookies o un objeto `{"cookies": [...]}`. No exportes cookies de
+   otros sitios. Puedes incluir `JSESSIONID` de la misma sesión si está disponible;
+   conserva su valor exacto, escapando sus comillas como `\"` en JSON.
+4. Guarda el archivo y ejecuta el monitor. Nunca pegues estas cookies en chats,
+   capturas, `.env` o el frontend. No necesitas instalar una extensión para copiar
+   `li_at` desde DevTools.
+
+### Windows (desde la carpeta del scraper)
+
+Después de instalar las dependencias y Chromium como se indica más abajo:
+
+```powershell
+# Consulta local sin login interactivo, usando las cookies que rellenaste.
+.\.venv\Scripts\python.exe linkedin_jobs.py --cookies-file .\linkedin.cookies.json --require-session --once
+
+# Enviar resultados a tu API local, leyendo el token del .env privado existente.
+..\backend\.venv\Scripts\python.exe -m dotenv -f .env run -- .\.venv\Scripts\python.exe linkedin_jobs.py --cookies-file .\linkedin.cookies.json --require-session --api-url http://127.0.0.1:8000
+```
+
+Para crear el JSON en un clon nuevo sin sobrescribir uno existente:
+
+```powershell
+if (!(Test-Path .\linkedin.cookies.json)) { Copy-Item .\linkedin.cookies.example.json .\linkedin.cookies.json }
+```
+
+### Producción Linux con Docker
+
+Mantén el `.env` del scraper con la URL y el token del backend. El Compose
+opcional pertenece **solo a este proyecto** y añade el montaje del JSON privado:
+
+```bash
+cd ~/job-tracker/scrap_jobs
+if [ ! -f linkedin.cookies.json ]; then
+  cp linkedin.cookies.example.json linkedin.cookies.json
+fi
+nano linkedin.cookies.json
+# El contenedor usa UID 10001; necesita permiso de lectura del archivo.
+sudo chown 10001:10001 linkedin.cookies.json
+sudo chmod 600 linkedin.cookies.json
+docker compose stop worker
+docker compose -f docker-compose.yml -f docker-compose.cookies.yml up -d --build worker
+docker compose -f docker-compose.yml -f docker-compose.cookies.yml logs -f worker
+```
+
+No necesitas arrancar el servicio `login` ni abrir el escritorio temporal con este
+método. Conserva ambos `-f` en las siguientes operaciones `up`/`run` para mantener
+el montaje. El archivo se monta en `/run/secrets/linkedin.cookies.json` como solo
+lectura; no forma parte de la imagen. La red `web` y la ausencia de Traefik para
+el worker se conservan. Para editarlo después, detén el worker, usa
+`sudoedit linkedin.cookies.json` y vuelve a ejecutar el comando `up` con ambos archivos.
+
+El JSON se lee una vez por arranque y reemplaza las cookies del perfil exclusivo
+del scraper. Si cambias de cuenta, comprueba que el archivo completo corresponde
+a una sola sesión. Si LinkedIn pide autenticación, renueva la sesión manualmente,
+actualiza el archivo y reinicia el worker. No cambia de método ni reintenta el
+login automáticamente cuando el JSON está ausente, vacío, caducado o inválido.
+Las cookies nunca se envían al backend; el perfil persistente también contiene
+la sesión importada y debe mantenerse privado.
+
+También puedes configurar `LINKEDIN_COOKIES_FILE` con una **ruta**, sin incluir
+valores de cookies en `.env`. `--cookies-file` tiene prioridad sobre esa variable.
+Python directo no carga `.env` automáticamente. `--login` explícito permite
+volver al acceso interactivo y omite la ruta configurada en el entorno.
+
+Referencia: [importar cookies con Playwright](https://playwright.dev/python/docs/api/class-browsercontext#browser-context-add-cookies).
 
 ## Linux / Docker
 
 Este proyecto tiene `Dockerfile` y `docker-compose.yml` propios. Usa la red externa
 `web` ya existente y arranca después del backend en la misma máquina.
 Copia `.env.example` a `.env`, usa `JOBS_API_URL=http://job-tracker-api:8000` y el mismo
-`JOBS_INGEST_TOKEN` del backend. Esas son las únicas variables de aplicación que
-necesita este proyecto. No necesita claves VAPID, Firebase Admin, conexión a
-PostgreSQL ni contraseña de LinkedIn en `.env`. La sesión se guarda mediante login.
+`JOBS_INGEST_TOKEN` del backend. No necesita claves VAPID, Firebase Admin, conexión a
+PostgreSQL ni contraseña de LinkedIn en `.env`. La sesión se importa desde cookies
+como se explica arriba, o se guarda mediante el login interactivo que sigue.
 Los `.env` privados no se publican en GitHub: al clonar en Linux debes crearlos
 o copiarlos de forma privada. Conserva el mismo token en backend y worker.
 

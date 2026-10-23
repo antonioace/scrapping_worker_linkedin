@@ -1,0 +1,13 @@
+# Optional private cookie import; combine only with this project's Compose.
+# The JSON is mounted at runtime and never copied into the Docker image.
+services:
+  worker:
+    environment:
+      LINKEDIN_COOKIES_FILE: /run/secrets/linkedin.cookies.json
+    volumes:
+      - type: bind
+        source: ./linkedin.cookies.json
+        target: /run/secrets/linkedin.cookies.json
+        read_only: true
+        bind:
+          create_host_path: false

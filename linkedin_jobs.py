@@ -27,6 +27,7 @@ from playwright.sync_api import TimeoutError as BrowserTimeout
 from playwright.sync_api import sync_playwright
 
 from api_sync import enqueue, enqueue_existing_jobs, flush_outbox, init_outbox
+from linkedin_cookies import load_cookies
 
 ROOT = Path(__file__).resolve().parent
 BOGOTA = ZoneInfo("America/Bogota")
@@ -295,14 +296,23 @@ def save_report(conn, output: Path, url: str, jobs: list[dict], limited: bool,
     return report
 
 
-def monitor(playwright, args, url: str) -> None:
+def monitor(playwright, args, url: str, cookies: list[dict] | None = None) -> None:
     context = playwright.chromium.launch_persistent_context(
         str(args.profile), headless=not args.visible,
         viewport={"width": 1440, "height": 1000}, locale="es-CO",
     )
     try:
+        if cookies is not None:
+            try:
+                # A dedicated profile must not mix the old account with the JSON session.
+                context.clear_cookies()
+                context.add_cookies(cookies)
+            except BrowserError:
+                # Playwright validation errors can include cookie values.
+                raise SessionRequired("No se pudieron importar las cookies. Revisa el formato del JSON privado.") from None
+            LOG.info("Cookies de sesión importadas desde el JSON privado.")
         if not any(c["name"] == "li_at" for c in context.cookies("https://www.linkedin.com")):
-            raise SessionRequired("No hay una sesión guardada. Ejecuta: python linkedin_jobs.py --login")
+            raise SessionRequired("No hay una sesión guardada. Usa --cookies-file con una sesión válida o ejecuta --login.")
         page = context.pages[0] if context.pages else context.new_page()
         with closing(database(args.output / "jobs.sqlite3")) as conn:
             failures = 0
@@ -349,7 +359,9 @@ def arguments():
     parser.add_argument("--once", action="store_true", help="Genera un reporte y sale.")
     parser.add_argument("--visible", action="store_true", help="Muestra el navegador durante las consultas.")
     parser.add_argument("--require-session", action="store_true",
-                        help="No abre login automáticamente; requiere un perfil ya autenticado (servidores).")
+                        help="No abre login automáticamente; requiere un perfil autenticado o --cookies-file.")
+    parser.add_argument("--cookies-file", type=Path,
+                        help="JSON privado de cookies de LinkedIn. También LINKEDIN_COOKIES_FILE. Evita el login interactivo.")
     parser.add_argument("--interval", type=int, default=300, help="Segundos entre consultas; predeterminado: 300.")
     parser.add_argument("--max-pages", type=int, default=3, help="Máximo de páginas por consulta (25 posiciones por página).")
     parser.add_argument("--keywords", default="developer react")
@@ -374,6 +386,13 @@ def arguments():
             parser.error("Configura JOBS_INGEST_TOKEN para enviar resultados a la API.")
     if args.sync_only and (not args.api_url or args.login):
         parser.error("--sync-only requiere --api-url y no se combina con --login.")
+    if args.cookies_file and args.login:
+        parser.error("--cookies-file y --login son alternativas; usa solo una de ellas.")
+    if args.cookies_file is None and not args.login:
+        cookie_path = os.environ.get("LINKEDIN_COOKIES_FILE", "").strip()
+        args.cookies_file = Path(cookie_path) if cookie_path else None
+    if args.cookies_file:
+        args.cookies_file = args.cookies_file.resolve()
     args.profile = args.profile.resolve()
     args.output = args.output.resolve()
     return args
@@ -405,15 +424,17 @@ def main() -> int:
                 enqueue_existing_jobs(conn, now(), url)
                 queued = conn.execute("SELECT COUNT(*) FROM api_outbox").fetchone()[0]
                 return 0 if flush_outbox(conn, args.api_url, args.api_token, max_batches=max(1, queued)) else 1
+        cookies_file = getattr(args, "cookies_file", None)
+        cookies = load_cookies(cookies_file) if cookies_file else None
         with sync_playwright() as playwright:
             if args.login:
                 login(playwright, args.profile, args.login_timeout)
                 return 0
-            if not args.profile.exists():
+            if not args.profile.exists() and cookies is None:
                 if args.require_session:
                     raise SessionRequired("No hay perfil autenticado. Ejecuta primero el servicio Docker login o --login.")
                 login(playwright, args.profile, args.login_timeout)
-            monitor(playwright, args, url)
+            monitor(playwright, args, url, cookies=cookies)
     except KeyboardInterrupt:
         if not args.login and not args.sync_only:
             save_stopped_status(args, url, "Monitor detenido por el operador")
@@ -422,7 +443,7 @@ def main() -> int:
     except (SessionRequired, AccessBlocked, BrowserError, RuntimeError, OSError, sqlite3.Error) as exc:
         save_stopped_status(args, url, str(exc))
         LOG.error("%s", exc)
-        LOG.error("Si pide acceso, ejecuta --login. Si falta Chromium: python -m playwright install chromium.")
+        LOG.error("Si pide acceso, renueva el JSON de --cookies-file o ejecuta --login. Si falta Chromium: python -m playwright install chromium.")
         return 1
     return 0
 
