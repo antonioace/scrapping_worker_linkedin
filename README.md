@@ -1,5 +1,8 @@
 # Monitor de trabajos React en Colombia
 
+Guía paso a paso para ejecutar y probar los tres proyectos:
+[GUIA_PRUEBAS.md](https://github.com/antonioace/scraping_jobs_backend/blob/main/GUIA_PRUEBAS.md).
+
 Script en Python con Playwright. Consulta LinkedIn cada **300 segundos (5 minutos)**
 y genera reportes locales. Usa tu propia sesión, guardada en un perfil exclusivo de
 este proyecto; no requiere escribir contraseñas ni cookies en el código.
