@@ -6,9 +6,9 @@ este proyecto; no requiere escribir contraseñas ni cookies en el código.
 
 ## Linux / Docker
 
-Este proyecto tiene `Dockerfile` y `docker-compose.yml` propios. El backend debe
-estar iniciado en la misma máquina para que exista la red `job-tracker`.
-Copia `.env.example` a `.env`, usa `JOBS_API_URL=http://api:8000` y el mismo
+Este proyecto tiene `Dockerfile` y `docker-compose.yml` propios. Usa la red externa
+`web` ya existente y arranca después del backend en la misma máquina.
+Copia `.env.example` a `.env`, usa `JOBS_API_URL=http://job-tracker-api:8000` y el mismo
 `JOBS_INGEST_TOKEN` del backend. No necesita credenciales Firebase Admin.
 
 ```bash
@@ -26,6 +26,7 @@ Para acceder al login desde tu PC, abre un túnel SSH
 [el escritorio temporal](http://127.0.0.1:6080/vnc.html). El navegador se cierra
 al confirmar la sesión, conservada en el volumen privado `linkedin-data`.
 No abras el puerto 6080 a Internet ni copies perfiles de Windows a Linux.
+Worker y login tienen `traefik.enable=false`, sin rutas públicas.
 
 El worker arranca con `--require-session`: si falta la sesión se detiene en lugar
 de intentar abrir una ventana invisible. No se reinicia automáticamente ante

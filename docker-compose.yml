@@ -5,6 +5,8 @@ services:
       target: runtime
     env_file:
       - .env
+    labels:
+      - 'traefik.enable=false'
     init: true
     shm_size: 1gb
     stop_grace_period: 30s
@@ -12,7 +14,7 @@ services:
     volumes:
       - linkedin-data:/data
     networks:
-      - jobs
+      - web
 
   login:
     profiles: [login]
@@ -21,15 +23,18 @@ services:
       target: login
     init: true
     shm_size: 1gb
+    labels:
+      - 'traefik.enable=false'
     ports:
       - "127.0.0.1:6080:6080"
     volumes:
       - linkedin-data:/data
+    networks:
+      - web
 
 volumes:
   linkedin-data:
 
 networks:
-  jobs:
+  web:
     external: true
-    name: job-tracker
