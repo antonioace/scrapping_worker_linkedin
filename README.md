@@ -1,169 +1,112 @@
 # Monitor de trabajos React en Colombia
 
-Guía paso a paso para ejecutar y probar los tres proyectos:
+Guía para ejecutar los tres proyectos:
 [GUIA_PRUEBAS.md](https://github.com/antonioace/scraping_jobs_backend/blob/main/GUIA_PRUEBAS.md).
 
-Script en Python con Playwright. Consulta LinkedIn cada **900 segundos (15 minutos)**
-y genera reportes locales. Usa tu propia sesión, guardada en un perfil exclusivo de
-este proyecto, o importada desde un JSON privado de cookies; no requiere escribir
-contraseñas ni cookies en el código.
+Python y Playwright consultan LinkedIn cada **900 segundos (15 minutos)**,
+guardan reportes y envían ofertas al backend REST/SSE. La autenticación usa
+exclusivamente un JSON privado de cookies. El script carga automáticamente el
+`.env` de esta carpeta; las variables existentes del entorno tienen prioridad.
+
+## Preparación en Windows
+
+Desde esta carpeta, con Python 3.10 o superior:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m playwright install chromium
+```
+
+Si ya tienes el entorno activo, usa directamente `python`. Al actualizar,
+instala de nuevo `requirements.txt` para incluir `python-dotenv`.
+No necesitas ejecutar el cargador dotenv desde el entorno del backend.
 
 ## Usar tu sesión mediante cookies JSON
 
-Puedes reutilizar una sesión propia válida sin abrir el login del scraper.
-Esto simplifica el acceso; la consulta sigue usando Chromium y no se hace más
-rápida por importar cookies. Una cuenta restringida o una sesión revocada no se
-recuperan copiando cookies. El monitor se detiene ante verificación o bloqueo.
-
-En este PC está creado `linkedin.cookies.json` para rellenarlo. En otro equipo,
-copia `linkedin.cookies.example.json` a `linkedin.cookies.json` **solo si no existe**.
-El archivo real está excluido de Git y de la imagen Docker; la plantilla pública
-contiene únicamente un valor vacío.
-
-1. Abre LinkedIn en tu navegador habitual con tu sesión iniciada.
-2. En DevTools (`F12`), entra en **Application / Aplicación → Storage /
-   Almacenamiento → Cookies → https://www.linkedin.com**. En Firefox, usa la
-   pestaña Almacenamiento. Copia el valor completo de `li_at` al campo `value`
-   del JSON. Al ser HttpOnly no se obtiene con `document.cookie`.
-3. Mantén `name`, `domain` y `path` como aparecen en la plantilla. Si dispones
-   de un export JSON de las cookies de LinkedIn, también puedes usarlo: acepta
-   una lista de cookies o un objeto `{"cookies": [...]}`. No exportes cookies de
-   otros sitios. Puedes incluir `JSESSIONID` de la misma sesión si está disponible;
-   conserva su valor exacto, escapando sus comillas como `\"` en JSON.
-4. Guarda el archivo y ejecuta el monitor. Nunca pegues estas cookies en chats,
-   capturas, `.env` o el frontend. No necesitas instalar una extensión para copiar
-   `li_at` desde DevTools.
-
-### Windows (desde la carpeta del scraper)
-
-Después de instalar las dependencias y Chromium como se indica más abajo:
-
-```powershell
-# Consulta local sin login interactivo, usando las cookies que rellenaste.
-.\.venv\Scripts\python.exe linkedin_jobs.py --cookies-file .\linkedin.cookies.json --require-session --once
-
-# Enviar resultados a tu API local, leyendo el token del .env privado existente.
-..\backend\.venv\Scripts\python.exe -m dotenv -f .env run -- .\.venv\Scripts\python.exe linkedin_jobs.py --cookies-file .\linkedin.cookies.json --require-session --api-url http://127.0.0.1:8000
-```
-
-Para crear el JSON en un clon nuevo sin sobrescribir uno existente:
+En este PC ya existe `linkedin.cookies.json`: conserva su contenido privado.
+En otro equipo, copia la plantilla únicamente si el archivo todavía no existe:
 
 ```powershell
 if (!(Test-Path .\linkedin.cookies.json)) { Copy-Item .\linkedin.cookies.example.json .\linkedin.cookies.json }
 ```
 
-### Producción Linux con Docker
+1. Abre LinkedIn en tu navegador habitual con tu sesión iniciada.
+2. Ve a `F12 → Application / Aplicación → Storage / Almacenamiento → Cookies →
+   https://www.linkedin.com`. Copia el valor completo de `li_at` al campo `value`
+   del JSON. Conserva el nombre, dominio y ruta de la plantilla.
+3. Guarda el JSON local. Puedes usar una lista de cookies o un objeto
+   `{"cookies": [...]}` exportado únicamente de LinkedIn. Si incluyes `JSESSIONID`,
+   usa la misma sesión y escapa las comillas de su valor como `\"` en JSON.
 
-Mantén el `.env` del scraper con la URL y el token del backend. El Compose
-opcional pertenece **solo a este proyecto** y añade el montaje del JSON privado:
+El JSON real se excluye de Git y de la imagen Docker. No lo compartas ni lo
+incluyas en `.env` o el frontend. La plantilla pública tiene el valor vacío.
+La cookie HttpOnly se consulta en DevTools, no mediante `document.cookie`.
+
+Se valida el JSON antes de abrir Chromium. Si falta, está vacío o caducado,
+el monitor se detiene. El perfil guardado no sustituye al JSON; las cookies del
+perfil se reemplazan en cada arranque. Si LinkedIn pide verificación, actualiza
+manualmente tu sesión y el JSON, y reinicia. El script no abre un formulario de
+acceso. Importar cookies no elimina una restricción de cuenta.
+
+## Ejecutar en Windows / desarrollo
+
+El backend debe estar ejecutándose en `http://127.0.0.1:8000`. Con el entorno
+activo y el `.env` ya configurado, ejecuta:
+
+```powershell
+python linkedin_jobs.py --api-url http://127.0.0.1:8000
+```
+
+Se usa `linkedin.cookies.json` automáticamente. La primera búsqueda es inmediata
+y las siguientes son cada 15 minutos. Detén el proceso con `Ctrl+C`.
+Para una sola consulta, añade `--once`.
+
+El `.env` del scraper necesita `JOBS_API_URL` y el mismo `JOBS_INGEST_TOKEN` del
+backend. El argumento `--api-url` permite usar la API local aunque tu `.env`
+conserve el alias Docker `http://job-tracker-api:8000`. Nunca imprime el token.
+Para otra ubicación del JSON usa `--cookies-file ruta/al/archivo.json`, o la
+variable opcional `LINKEDIN_COOKIES_FILE`. El argumento tiene prioridad.
+
+## Producción Linux / Docker
+
+Este repositorio tiene un único `docker-compose.yml` y un único servicio `worker`.
+Comparte la red externa `web` con el backend, sin dominio ni router Traefik.
+Configura el `.env` privado con `JOBS_API_URL=http://job-tracker-api:8000` y el mismo
+`JOBS_INGEST_TOKEN` del backend. No necesita VAPID, Firebase Admin ni PostgreSQL.
 
 ```bash
 cd ~/job-tracker/scrap_jobs
+if [ ! -f .env ]; then cp .env.example .env; fi
+chmod 600 .env
+nano .env
 if [ ! -f linkedin.cookies.json ]; then
   cp linkedin.cookies.example.json linkedin.cookies.json
 fi
 nano linkedin.cookies.json
-# El contenedor usa UID 10001; necesita permiso de lectura del archivo.
+# El contenedor usa UID 10001 y debe poder leer el JSON.
 sudo chown 10001:10001 linkedin.cookies.json
 sudo chmod 600 linkedin.cookies.json
-docker compose stop worker
-docker compose -f docker-compose.yml -f docker-compose.cookies.yml up -d --build worker
-docker compose -f docker-compose.yml -f docker-compose.cookies.yml logs -f worker
-```
-
-No necesitas arrancar el servicio `login` ni abrir el escritorio temporal con este
-método. Conserva ambos `-f` en las siguientes operaciones `up`/`run` para mantener
-el montaje. El archivo se monta en `/run/secrets/linkedin.cookies.json` como solo
-lectura; no forma parte de la imagen. La red `web` y la ausencia de Traefik para
-el worker se conservan. Para editarlo después, detén el worker, usa
-`sudoedit linkedin.cookies.json` y vuelve a ejecutar el comando `up` con ambos archivos.
-
-El JSON se lee una vez por arranque y reemplaza las cookies del perfil exclusivo
-del scraper. Si cambias de cuenta, comprueba que el archivo completo corresponde
-a una sola sesión. Si LinkedIn pide autenticación, renueva la sesión manualmente,
-actualiza el archivo y reinicia el worker. No cambia de método ni reintenta el
-login automáticamente cuando el JSON está ausente, vacío, caducado o inválido.
-Las cookies nunca se envían al backend; el perfil persistente también contiene
-la sesión importada y debe mantenerse privado.
-
-También puedes configurar `LINKEDIN_COOKIES_FILE` con una **ruta**, sin incluir
-valores de cookies en `.env`. `--cookies-file` tiene prioridad sobre esa variable.
-Python directo no carga `.env` automáticamente. `--login` explícito permite
-volver al acceso interactivo y omite la ruta configurada en el entorno.
-
-Referencia: [importar cookies con Playwright](https://playwright.dev/python/docs/api/class-browsercontext#browser-context-add-cookies).
-
-## Linux / Docker
-
-Este proyecto tiene `Dockerfile` y `docker-compose.yml` propios. Usa la red externa
-`web` ya existente y arranca después del backend en la misma máquina.
-Copia `.env.example` a `.env`, usa `JOBS_API_URL=http://job-tracker-api:8000` y el mismo
-`JOBS_INGEST_TOKEN` del backend. No necesita claves VAPID, Firebase Admin, conexión a
-PostgreSQL ni contraseña de LinkedIn en `.env`. La sesión se importa desde cookies
-como se explica arriba, o se guarda mediante el login interactivo que sigue.
-Los `.env` privados no se publican en GitHub: al clonar en Linux debes crearlos
-o copiarlos de forma privada. Conserva el mismo token en backend y worker.
-
-```bash
-docker compose build worker login
-# Primera vez o renovación: detener worker antes de usar su perfil.
-docker compose stop worker
-docker compose run --rm --service-ports login
-# Después de completar LinkedIn en el escritorio temporal:
-docker compose up -d worker
+docker compose up -d --build --remove-orphans worker
 docker compose logs -f worker
 ```
 
-Para acceder al login desde tu PC, abre un túnel SSH
-`ssh -N -L 6080:127.0.0.1:6080 usuario@servidor` y visita
-[el escritorio temporal](http://127.0.0.1:6080/vnc.html). El navegador se cierra
-al confirmar la sesión, conservada en el volumen privado `linkedin-data`.
-No abras el puerto 6080 a Internet ni copies perfiles de Windows a Linux.
-Worker y login tienen `traefik.enable=false`, sin rutas públicas.
+El Compose monta el JSON como solo lectura en `/run/secrets/linkedin.cookies.json`.
+El volumen privado `linkedin-data` conserva el perfil, los reportes y la cola
+SQLite. No se publica ningún puerto. El servicio y la imagen de login temporal,
+noVNC y el Compose complementario de cookies fueron retirados: usa solo el
+Compose principal. Los Compose de backend y frontend siguen separados.
 
-El worker arranca con `--require-session`: si falta la sesión se detiene en lugar
-de intentar abrir una ventana invisible. No se reinicia automáticamente ante
-verificación de LinkedIn o fallo fatal. `docker compose stop worker` registra un
-estado de parada y lo pone en la cola de entrega a la API.
+Para renovar cookies: `docker compose stop worker`, edita con
+`sudoedit linkedin.cookies.json` y ejecuta `docker compose up -d worker`.
+El proceso lee el JSON una vez al arrancar. Una sola instancia debe usar el perfil.
+No se reinicia automáticamente ante bloqueo o fallo fatal. No elimines el volumen
+si quieres conservar los reportes y la cola de envío.
 
 Guía completa:
-[DEPLOY_LINUX.md del backend](https://github.com/antonioace/scraping_jobs_backend/blob/main/DEPLOY_LINUX.md).
-Los Compose son independientes y no se incluyen workflows de GitHub Actions.
-
-## Preparación (PowerShell, Python 3.10 o superior)
-
-Docker Compose carga `.env` automáticamente. Al ejecutar Python directamente,
-exporta `JOBS_API_URL` y `JOBS_INGEST_TOKEN` en la terminal (ver la sección de
-sincronización con la API); el script no carga `.env` por sí solo. Fuera de Docker,
-usa una URL accesible desde ese equipo, por ejemplo `http://127.0.0.1:8000`, en
-lugar del alias Docker `job-tracker-api`.
-
-Desde esta carpeta:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m playwright install chromium
-```
-
-## Iniciar sesión y ejecutar
-
-```powershell
-# Abre Chromium: ingresa tú y completa la verificación del celular.
-.\.venv\Scripts\python.exe linkedin_jobs.py --login
-
-# Primer reporte inmediato y luego uno cada quince minutos, en headless.
-.\.venv\Scripts\python.exe linkedin_jobs.py
-```
-
-El login se detecta al encontrar una cookie de sesión junto con la navegación de
-la cuenta iniciada. El navegador se cierra y conserva el perfil local. También
-puedes ejecutar directamente el segundo comando: abre el login si el perfil aún
-no existe. Si caduca la sesión o LinkedIn solicita una verificación, el monitor
-se detiene; renueva con `--login` y vuelve a iniciarlo.
-
-La primera vez tienes cinco minutos para completar el acceso. Para ampliar ese
-plazo: `linkedin_jobs.py --login --login-timeout 600`.
+[DEPLOY_LINUX.md](https://github.com/antonioace/scraping_jobs_backend/blob/main/DEPLOY_LINUX.md).
+No se incluyen contenedores PostgreSQL ni workflows de GitHub Actions.
 
 ## Filtros
 
@@ -215,16 +158,16 @@ verificación detienen el monitor inmediatamente.
 
 ```powershell
 # Solo una consulta, útil para comprobar la configuración.
-.\.venv\Scripts\python.exe linkedin_jobs.py --once
+python linkedin_jobs.py --once
 
 # Ver qué está mostrando LinkedIn durante una consulta.
-.\.venv\Scripts\python.exe linkedin_jobs.py --once --visible
+python linkedin_jobs.py --once --visible
 
 # Ampliar la cantidad de páginas y consultar cada treinta minutos.
-.\.venv\Scripts\python.exe linkedin_jobs.py --max-pages 5 --interval 1800
+python linkedin_jobs.py --max-pages 5 --interval 1800
 
 # Ver todas las opciones.
-.\.venv\Scripts\python.exe linkedin_jobs.py --help
+python linkedin_jobs.py --help
 
 # Detener el monitor: Ctrl+C en su terminal.
 ```
@@ -241,7 +184,7 @@ y [almacenamiento de autenticación](https://playwright.dev/python/docs/auth).
 ## Pruebas locales sin cuenta
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+python -m unittest discover -s tests -v
 ```
 
 Las pruebas cubren filtros, lectura de tarjetas, deduplicación entre ejecuciones,
@@ -255,12 +198,11 @@ transmitir cambios por un único `GET /api/jobs/events`. Primero sigue
 [`../backend/JOB_FEED.md`](../backend/JOB_FEED.md) para configurar
 `JOBS_INGEST_TOKEN`, aplicar la migración y arrancar la API.
 
-En la terminal del scraper configura la misma clave y la URL base del backend:
+Configura la URL y el token en el `.env` privado del scraper. Python lo lee
+automáticamente; para desarrollo basta con:
 
 ```powershell
-$env:JOBS_API_URL = "http://localhost:8000"
-$env:JOBS_INGEST_TOKEN = "LA_MISMA_CLAVE_DEL_BACKEND"
-.\.venv\Scripts\python.exe linkedin_jobs.py
+python linkedin_jobs.py --api-url http://127.0.0.1:8000
 ```
 
 Cada reporte se guarda junto con un lote pendiente en el SQLite local. El monitor
@@ -272,8 +214,8 @@ también se sincronizan cuando hay conexión. La sesión de LinkedIn permanece l
 Para importar las ofertas ya guardadas y entregar lotes pendientes sin navegador:
 
 ```powershell
-.\.venv\Scripts\python.exe linkedin_jobs.py --sync-only
+python linkedin_jobs.py --sync-only
 ```
 
-Sin URL de API, se mantiene el funcionamiento local. Las variables del scraper
-se toman del entorno de su proceso; el script no carga un archivo `.env`.
+Con `JOBS_API_URL` vacío se mantiene el funcionamiento local. Python carga
+automáticamente el `.env` del proyecto, sin sobrescribir variables del entorno.

@@ -12,19 +12,18 @@ def options(folder: str) -> argparse.Namespace:
     root = Path(folder)
     return argparse.Namespace(
         profile=root / "profile", output=root / "reports", api_url="", api_token="",
-        sync_only=False, login=False, require_session=True, keywords="react", location="Colombia",
+        sync_only=False, cookies_file=root / "cookies.json", keywords="react", location="Colombia",
     )
 
 
 class LifecycleTests(unittest.TestCase):
-    def test_server_without_profile_stops_without_opening_a_login_window(self):
+    def test_missing_cookie_file_stops_before_starting_chromium(self):
         with tempfile.TemporaryDirectory() as folder:
             args = options(folder)
             with patch.object(app, "arguments", return_value=args), \
-                 patch.object(app, "sync_playwright", return_value=MagicMock()), \
-                 patch.object(app, "login") as login:
+                 patch.object(app, "sync_playwright") as playwright:
                 self.assertEqual(app.main(), 1)
-                login.assert_not_called()
+                playwright.assert_not_called()
             status = json.loads((args.output / "status.json").read_text(encoding="utf-8"))
             self.assertEqual(status["status"], "stopped")
 
@@ -46,7 +45,7 @@ class LifecycleTests(unittest.TestCase):
     def test_operator_stop_records_inactive_status(self):
         with tempfile.TemporaryDirectory() as folder:
             args = options(folder)
-            args.profile.mkdir()
+            args.cookies_file.write_text('[{"name":"li_at","value":"test-session"}]', encoding="utf-8")
             with patch.object(app, "arguments", return_value=args), \
                  patch.object(app, "sync_playwright", return_value=MagicMock()), \
                  patch.object(app, "monitor", side_effect=KeyboardInterrupt):

@@ -6,5 +6,3 @@
 !api_sync.py
 !linkedin_jobs.py
 !linkedin_cookies.py
-!docker/
-!docker/login.py

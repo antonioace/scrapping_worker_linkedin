@@ -22,6 +22,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 from playwright.sync_api import Error as BrowserError
 from playwright.sync_api import TimeoutError as BrowserTimeout
 from playwright.sync_api import sync_playwright
@@ -41,7 +42,6 @@ EMPTY_SELECTOR = (
     ".jobs-search-results-list__no-results, .jobs-search-two-pane__no-results, "
     ".jobs-search-empty-state"
 )
-AUTH_SELECTOR = "#global-nav, nav.global-nav, a[href*='/mynetwork/']"
 
 
 class SessionRequired(RuntimeError):
@@ -136,26 +136,6 @@ def open_page(page, url):
         raise RuntimeError(f"LinkedIn respondió HTTP {response.status}.")
 
 
-def login(playwright, profile: Path, timeout: int) -> None:
-    context = playwright.chromium.launch_persistent_context(
-        str(profile), headless=False, viewport={"width": 1280, "height": 900},
-    )
-    try:
-        page = context.pages[0] if context.pages else context.new_page()
-        open_page(page, "https://www.linkedin.com/login")
-        LOG.info("Inicia sesión en el navegador y aprueba la verificación si aparece. Tienes %s segundos.", timeout)
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            has_cookie = any(c["name"] == "li_at" for c in context.cookies("https://www.linkedin.com"))
-            if has_cookie and not needs_login(page) and page.locator(AUTH_SELECTOR).first.is_visible():
-                LOG.info("Sesión confirmada. El perfil queda guardado en %s", profile)
-                return
-            page.wait_for_timeout(1000)
-        raise SessionRequired("No se confirmó el inicio de sesión a tiempo. Ejecuta otra vez con --login.")
-    finally:
-        context.close()
-
-
 def wait_results(page) -> None:
     try:
         page.wait_for_function(
@@ -172,7 +152,7 @@ def wait_results(page) -> None:
             "no se registrará como una búsqueda sin resultados. Revisa con --visible."
         ) from exc
     if needs_login(page):
-        raise SessionRequired("La sesión caducó o LinkedIn pide verificación. Ejecuta --login.")
+        raise SessionRequired("La sesión caducó o LinkedIn pide verificación. Actualiza tu JSON privado de cookies.")
 
 
 def collect_jobs(page, url: str, max_pages: int) -> tuple[list[dict], bool]:
@@ -296,23 +276,22 @@ def save_report(conn, output: Path, url: str, jobs: list[dict], limited: bool,
     return report
 
 
-def monitor(playwright, args, url: str, cookies: list[dict] | None = None) -> None:
+def monitor(playwright, args, url: str, cookies: list[dict]) -> None:
     context = playwright.chromium.launch_persistent_context(
         str(args.profile), headless=not args.visible,
         viewport={"width": 1440, "height": 1000}, locale="es-CO",
     )
     try:
-        if cookies is not None:
-            try:
-                # A dedicated profile must not mix the old account with the JSON session.
-                context.clear_cookies()
-                context.add_cookies(cookies)
-            except BrowserError:
-                # Playwright validation errors can include cookie values.
-                raise SessionRequired("No se pudieron importar las cookies. Revisa el formato del JSON privado.") from None
-            LOG.info("Cookies de sesión importadas desde el JSON privado.")
+        try:
+            # The JSON is the only source of authentication, including on restarts.
+            context.clear_cookies()
+            context.add_cookies(cookies)
+        except BrowserError:
+            # Playwright validation errors can include cookie values.
+            raise SessionRequired("No se pudieron importar las cookies. Revisa el formato del JSON privado.") from None
+        LOG.info("Cookies de sesión importadas desde el JSON privado.")
         if not any(c["name"] == "li_at" for c in context.cookies("https://www.linkedin.com")):
-            raise SessionRequired("No hay una sesión guardada. Usa --cookies-file con una sesión válida o ejecuta --login.")
+            raise SessionRequired("No se encontró una cookie li_at aplicable a www.linkedin.com. Revisa tu JSON privado.")
         page = context.pages[0] if context.pages else context.new_page()
         with closing(database(args.output / "jobs.sqlite3")) as conn:
             failures = 0
@@ -354,28 +333,27 @@ def monitor(playwright, args, url: str, cookies: list[dict] | None = None) -> No
 
 
 def arguments():
+    # Read this project's .env without replacing variables supplied by the host.
+    load_dotenv(ROOT / ".env", override=False)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--login", action="store_true", help="Abre el navegador para guardar o renovar la sesión y sale.")
     parser.add_argument("--once", action="store_true", help="Genera un reporte y sale.")
     parser.add_argument("--visible", action="store_true", help="Muestra el navegador durante las consultas.")
-    parser.add_argument("--require-session", action="store_true",
-                        help="No abre login automáticamente; requiere un perfil autenticado o --cookies-file.")
     parser.add_argument("--cookies-file", type=Path,
-                        help="JSON privado de cookies de LinkedIn. También LINKEDIN_COOKIES_FILE. Evita el login interactivo.")
+                        default=Path(os.environ.get("LINKEDIN_COOKIES_FILE", "").strip() or ROOT / "linkedin.cookies.json"),
+                        help="JSON privado de cookies. Predeterminado: linkedin.cookies.json; también LINKEDIN_COOKIES_FILE.")
     parser.add_argument("--interval", type=int, default=900, help="Segundos entre consultas; predeterminado: 900 (15 minutos).")
     parser.add_argument("--max-pages", type=int, default=3, help="Máximo de páginas por consulta (25 posiciones por página).")
     parser.add_argument("--keywords", default="developer react")
     parser.add_argument("--location", default="Colombia")
     parser.add_argument("--profile", type=Path, default=ROOT / ".linkedin-profile")
     parser.add_argument("--output", type=Path, default=ROOT / "reports")
-    parser.add_argument("--login-timeout", type=int, default=300)
     parser.add_argument("--api-url", default=os.environ.get("JOBS_API_URL", ""),
                         help="URL base del backend, por ejemplo http://localhost:8000. También JOBS_API_URL.")
     parser.add_argument("--sync-only", action="store_true",
                         help="Envía las ofertas ya guardadas a la API sin abrir Chromium.")
     args = parser.parse_args()
-    if args.interval < 60 or args.max_pages < 1 or args.login_timeout < 1:
-        parser.error("--interval debe ser >= 60, --max-pages y --login-timeout deben ser >= 1.")
+    if args.interval < 60 or args.max_pages < 1:
+        parser.error("--interval debe ser >= 60 y --max-pages debe ser >= 1.")
     args.api_url = args.api_url.strip().rstrip("/")
     args.api_token = os.environ.get("JOBS_INGEST_TOKEN", "")
     if args.api_url:
@@ -384,15 +362,9 @@ def arguments():
             parser.error("--api-url debe ser una URL base http(s), sin credenciales, ruta ni parámetros.")
         if not args.api_token:
             parser.error("Configura JOBS_INGEST_TOKEN para enviar resultados a la API.")
-    if args.sync_only and (not args.api_url or args.login):
-        parser.error("--sync-only requiere --api-url y no se combina con --login.")
-    if args.cookies_file and args.login:
-        parser.error("--cookies-file y --login son alternativas; usa solo una de ellas.")
-    if args.cookies_file is None and not args.login:
-        cookie_path = os.environ.get("LINKEDIN_COOKIES_FILE", "").strip()
-        args.cookies_file = Path(cookie_path) if cookie_path else None
-    if args.cookies_file:
-        args.cookies_file = args.cookies_file.resolve()
+    if args.sync_only and not args.api_url:
+        parser.error("--sync-only requiere --api-url.")
+    args.cookies_file = args.cookies_file.resolve()
     args.profile = args.profile.resolve()
     args.output = args.output.resolve()
     return args
@@ -424,26 +396,18 @@ def main() -> int:
                 enqueue_existing_jobs(conn, now(), url)
                 queued = conn.execute("SELECT COUNT(*) FROM api_outbox").fetchone()[0]
                 return 0 if flush_outbox(conn, args.api_url, args.api_token, max_batches=max(1, queued)) else 1
-        cookies_file = getattr(args, "cookies_file", None)
-        cookies = load_cookies(cookies_file) if cookies_file else None
+        cookies = load_cookies(args.cookies_file)
         with sync_playwright() as playwright:
-            if args.login:
-                login(playwright, args.profile, args.login_timeout)
-                return 0
-            if not args.profile.exists() and cookies is None:
-                if args.require_session:
-                    raise SessionRequired("No hay perfil autenticado. Ejecuta primero el servicio Docker login o --login.")
-                login(playwright, args.profile, args.login_timeout)
             monitor(playwright, args, url, cookies=cookies)
     except KeyboardInterrupt:
-        if not args.login and not args.sync_only:
+        if not args.sync_only:
             save_stopped_status(args, url, "Monitor detenido por el operador")
         LOG.info("Monitor detenido.")
         return 0
     except (SessionRequired, AccessBlocked, BrowserError, RuntimeError, OSError, sqlite3.Error) as exc:
         save_stopped_status(args, url, str(exc))
         LOG.error("%s", exc)
-        LOG.error("Si pide acceso, renueva el JSON de --cookies-file o ejecuta --login. Si falta Chromium: python -m playwright install chromium.")
+        LOG.error("Si pide acceso, actualiza tu JSON privado de cookies. Si falta Chromium: python -m playwright install chromium.")
         return 1
     return 0
 

@@ -44,7 +44,7 @@ class CookieImportTests(unittest.TestCase):
                     self.load(data)
                 self.assertNotIn("private-test-value", str(error.exception))
 
-    def test_first_start_with_json_skips_interactive_login(self):
+    def test_first_start_uses_json_without_an_existing_profile(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             cookie_file = root / "cookies.json"
@@ -52,14 +52,13 @@ class CookieImportTests(unittest.TestCase):
             args = argparse.Namespace(
                 profile=root / "missing-profile", cookies_file=cookie_file,
                 output=root / "reports", api_url="", api_token="",
-                sync_only=False, login=False, require_session=True,
+                sync_only=False,
                 keywords="react", location="Colombia",
             )
             with patch.object(app, "arguments", return_value=args), \
                  patch.object(app, "sync_playwright", return_value=MagicMock()), \
-                 patch.object(app, "login") as login, patch.object(app, "monitor") as monitor:
+                 patch.object(app, "monitor") as monitor:
                 self.assertEqual(app.main(), 0)
-                login.assert_not_called()
                 self.assertEqual(monitor.call_args.kwargs["cookies"][0]["name"], "li_at")
 
     def test_monitor_installs_cookies_before_first_query_and_closes_profile(self):
@@ -88,10 +87,12 @@ class CookieImportTests(unittest.TestCase):
         self.assertNotIn("private-test-value", str(error.exception))
         context.close.assert_called_once()
 
-    def test_explicit_login_ignores_cookie_path_from_environment(self):
+    def test_cookie_path_uses_environment_and_loads_project_dotenv(self):
         with patch.dict(os.environ, {"LINKEDIN_COOKIES_FILE": "missing.json"}), \
-             patch("sys.argv", ["linkedin_jobs.py", "--login"]):
-            self.assertIsNone(app.arguments().cookies_file)
+             patch.object(app, "load_dotenv") as load_env, \
+             patch("sys.argv", ["linkedin_jobs.py"]):
+            self.assertEqual(app.arguments().cookies_file, Path("missing.json").resolve())
+            load_env.assert_called_once_with(app.ROOT / ".env", override=False)
 
 
 if __name__ == "__main__":

@@ -13,22 +13,12 @@ services:
     restart: "no"
     volumes:
       - linkedin-data:/data
-    networks:
-      - web
-
-  login:
-    profiles: [login]
-    build:
-      context: .
-      target: login
-    init: true
-    shm_size: 1gb
-    labels:
-      - 'traefik.enable=false'
-    ports:
-      - "127.0.0.1:6080:6080"
-    volumes:
-      - linkedin-data:/data
+      - type: bind
+        source: ./linkedin.cookies.json
+        target: /run/secrets/linkedin.cookies.json
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - web
 
