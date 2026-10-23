@@ -119,7 +119,8 @@ def parse_jobs(html: str) -> list[dict]:
     return list(jobs.values())
 
 
-def needs_login(page) -> bool:
+def session_needs_attention(page) -> bool:
+    """Detect a rejected cookie session or verification page without logging in."""
     path = urlsplit(page.url).path
     return any(part in path for part in ("/login", "/checkpoint", "/authwall", "/challenge", "/uas/")) or page.locator(
         "input#username, input[name='session_key']"
@@ -131,7 +132,7 @@ def open_page(page, url):
     if response and response.status in (403, 429):
         raise AccessBlocked(f"LinkedIn respondió HTTP {response.status}. Se detiene el monitor.")
     if response and response.status == 401:
-        raise SessionRequired("LinkedIn solicita iniciar sesión nuevamente.")
+        raise SessionRequired("LinkedIn rechazó la sesión de cookies. Actualiza tu JSON privado.")
     if response and response.status >= 400:
         raise RuntimeError(f"LinkedIn respondió HTTP {response.status}.")
 
@@ -145,13 +146,13 @@ def wait_results(page) -> None:
             arg={"cards": CARD_SELECTOR, "empty": EMPTY_SELECTOR}, timeout=30_000,
         )
     except BrowserTimeout as exc:
-        if needs_login(page):
+        if session_needs_attention(page):
             raise SessionRequired("La sesión caducó o LinkedIn pide verificación.") from exc
         raise RuntimeError(
             "No se reconoció la lista de ofertas. Puede haber cambiado la página; "
             "no se registrará como una búsqueda sin resultados. Revisa con --visible."
         ) from exc
-    if needs_login(page):
+    if session_needs_attention(page):
         raise SessionRequired("La sesión caducó o LinkedIn pide verificación. Actualiza tu JSON privado de cookies.")
 
 
@@ -181,7 +182,7 @@ def collect_jobs(page, url: str, max_pages: int) -> tuple[list[dict], bool]:
                 (panel || document.scrollingElement).scrollBy(0, 650);
             }""")
             page.wait_for_timeout(650)
-        if needs_login(page):
+        if session_needs_attention(page):
             raise SessionRequired("LinkedIn solicita verificación durante la consulta.")
         if not page_jobs:
             if page.locator(EMPTY_SELECTOR).count():
@@ -277,14 +278,12 @@ def save_report(conn, output: Path, url: str, jobs: list[dict], limited: bool,
 
 
 def monitor(playwright, args, url: str, cookies: list[dict]) -> None:
-    context = playwright.chromium.launch_persistent_context(
-        str(args.profile), headless=not args.visible,
-        viewport={"width": 1440, "height": 1000}, locale="es-CO",
-    )
+    browser = playwright.chromium.launch(headless=not args.visible)
+    context = None
     try:
+        # Fresh, in-memory session; no browser profile is read or saved on disk.
+        context = browser.new_context(viewport={"width": 1440, "height": 1000}, locale="es-CO")
         try:
-            # The JSON is the only source of authentication, including on restarts.
-            context.clear_cookies()
             context.add_cookies(cookies)
         except BrowserError:
             # Playwright validation errors can include cookie values.
@@ -292,7 +291,7 @@ def monitor(playwright, args, url: str, cookies: list[dict]) -> None:
         LOG.info("Cookies de sesión importadas desde el JSON privado.")
         if not any(c["name"] == "li_at" for c in context.cookies("https://www.linkedin.com")):
             raise SessionRequired("No se encontró una cookie li_at aplicable a www.linkedin.com. Revisa tu JSON privado.")
-        page = context.pages[0] if context.pages else context.new_page()
+        page = context.new_page()
         with closing(database(args.output / "jobs.sqlite3")) as conn:
             failures = 0
             while True:
@@ -329,7 +328,11 @@ def monitor(playwright, args, url: str, cookies: list[dict]) -> None:
                 LOG.info("Siguiente consulta en %.0f segundos. Ctrl+C para detener.", delay)
                 time.sleep(delay)
     finally:
-        context.close()
+        try:
+            if context is not None:
+                context.close()
+        finally:
+            browser.close()
 
 
 def arguments():
@@ -345,7 +348,6 @@ def arguments():
     parser.add_argument("--max-pages", type=int, default=3, help="Máximo de páginas por consulta (25 posiciones por página).")
     parser.add_argument("--keywords", default="developer react")
     parser.add_argument("--location", default="Colombia")
-    parser.add_argument("--profile", type=Path, default=ROOT / ".linkedin-profile")
     parser.add_argument("--output", type=Path, default=ROOT / "reports")
     parser.add_argument("--api-url", default=os.environ.get("JOBS_API_URL", ""),
                         help="URL base del backend, por ejemplo http://localhost:8000. También JOBS_API_URL.")
@@ -365,7 +367,6 @@ def arguments():
     if args.sync_only and not args.api_url:
         parser.error("--sync-only requiere --api-url.")
     args.cookies_file = args.cookies_file.resolve()
-    args.profile = args.profile.resolve()
     args.output = args.output.resolve()
     return args
 

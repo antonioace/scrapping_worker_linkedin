@@ -11,7 +11,7 @@ import linkedin_jobs as app
 def options(folder: str) -> argparse.Namespace:
     root = Path(folder)
     return argparse.Namespace(
-        profile=root / "profile", output=root / "reports", api_url="", api_token="",
+        output=root / "reports", api_url="", api_token="",
         sync_only=False, cookies_file=root / "cookies.json", keywords="react", location="Colombia",
     )
 

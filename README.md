@@ -45,8 +45,8 @@ incluyas en `.env` o el frontend. La plantilla pública tiene el valor vacío.
 La cookie HttpOnly se consulta en DevTools, no mediante `document.cookie`.
 
 Se valida el JSON antes de abrir Chromium. Si falta, está vacío o caducado,
-el monitor se detiene. El perfil guardado no sustituye al JSON; las cookies del
-perfil se reemplazan en cada arranque. Si LinkedIn pide verificación, actualiza
+el monitor se detiene. Cada arranque crea un navegador temporal y carga las
+cookies del JSON, sin leer ni guardar perfiles en disco. Si LinkedIn pide verificación, actualiza
 manualmente tu sesión y el JSON, y reinicia. El script no abre un formulario de
 acceso. Importar cookies no elimina una restricción de cuenta.
 
@@ -93,14 +93,14 @@ docker compose logs -f worker
 ```
 
 El Compose monta el JSON como solo lectura en `/run/secrets/linkedin.cookies.json`.
-El volumen privado `linkedin-data` conserva el perfil, los reportes y la cola
+El volumen privado `linkedin-data` conserva los reportes y la cola
 SQLite. No se publica ningún puerto. El servicio y la imagen de login temporal,
 noVNC y el Compose complementario de cookies fueron retirados: usa solo el
 Compose principal. Los Compose de backend y frontend siguen separados.
 
 Para renovar cookies: `docker compose stop worker`, edita con
 `sudoedit linkedin.cookies.json` y ejecuta `docker compose up -d worker`.
-El proceso lee el JSON una vez al arrancar. Una sola instancia debe usar el perfil.
+El proceso lee el JSON una vez al arrancar. Usa una sola instancia por carpeta de reportes.
 No se reinicia automáticamente ante bloqueo o fallo fatal. No elimines el volumen
 si quieres conservar los reportes y la cola de envío.
 
@@ -172,13 +172,13 @@ python linkedin_jobs.py --help
 # Detener el monitor: Ctrl+C en su terminal.
 ```
 
-Usa una sola instancia por perfil de navegador y carpeta de reportes. El perfil
-`.linkedin-profile/` contiene una sesión privada y está excluido de Git junto
-con los reportes; no lo compartas ni lo subas al repositorio. LinkedIn puede
+Usa una sola instancia por carpeta de reportes. La sesión del navegador es
+temporal y se descarta al cerrar el proceso; las cookies se leen del JSON privado.
+Las carpetas de perfiles antiguos siguen ignoradas por Git. LinkedIn puede
 restringir la automatización y cambiar su HTML; en ese caso habrá que revisar
 los selectores en `linkedin_jobs.py`. No se intenta eludir verificaciones.
 
-Documentación: [perfil persistente de Playwright](https://playwright.dev/python/docs/api/class-browsertype#browser-type-launch-persistent-context)
+Documentación: [contextos de navegador de Playwright](https://playwright.dev/python/docs/browser-contexts)
 y [almacenamiento de autenticación](https://playwright.dev/python/docs/auth).
 
 ## Pruebas locales sin cuenta

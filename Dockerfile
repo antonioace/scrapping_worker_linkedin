@@ -16,4 +16,4 @@ RUN pip install -r requirements.txt \
 COPY api_sync.py linkedin_jobs.py linkedin_cookies.py ./
 USER scraper
 ENTRYPOINT ["python", "linkedin_jobs.py"]
-CMD ["--cookies-file", "/run/secrets/linkedin.cookies.json", "--profile", "/data/linkedin-profile", "--output", "/data/reports"]
+CMD ["--cookies-file", "/run/secrets/linkedin.cookies.json", "--output", "/data/reports"]

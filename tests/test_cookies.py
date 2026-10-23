@@ -44,13 +44,13 @@ class CookieImportTests(unittest.TestCase):
                     self.load(data)
                 self.assertNotIn("private-test-value", str(error.exception))
 
-    def test_first_start_uses_json_without_an_existing_profile(self):
+    def test_start_uses_session_from_json(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             cookie_file = root / "cookies.json"
             cookie_file.write_text('[{"name":"li_at","value":"test-session"}]', encoding="utf-8")
             args = argparse.Namespace(
-                profile=root / "missing-profile", cookies_file=cookie_file,
+                cookies_file=cookie_file,
                 output=root / "reports", api_url="", api_token="",
                 sync_only=False,
                 keywords="react", location="Colombia",
@@ -61,31 +61,35 @@ class CookieImportTests(unittest.TestCase):
                 self.assertEqual(app.main(), 0)
                 self.assertEqual(monitor.call_args.kwargs["cookies"][0]["name"], "li_at")
 
-    def test_monitor_installs_cookies_before_first_query_and_closes_profile(self):
+    def test_monitor_installs_cookies_in_temporary_context_and_closes_browser(self):
         with tempfile.TemporaryDirectory() as folder:
             playwright = MagicMock()
-            context = playwright.chromium.launch_persistent_context.return_value
+            browser = playwright.chromium.launch.return_value
+            context = browser.new_context.return_value
             context.cookies.return_value = [{"name": "li_at"}]
-            args = argparse.Namespace(profile=Path(folder) / "profile", visible=False,
+            args = argparse.Namespace(visible=False,
                                       output=Path(folder) / "reports", api_url="", once=True, max_pages=1)
             cookies = [{"name": "li_at", "value": "test-session", "domain": ".linkedin.com", "path": "/"}]
             with patch.object(app, "collect_jobs", return_value=([], False)) as collect:
                 app.monitor(playwright, args, app.search_url(), cookies=cookies)
-                context.clear_cookies.assert_called_once_with()
+                playwright.chromium.launch_persistent_context.assert_not_called()
                 context.add_cookies.assert_called_once_with(cookies)
                 collect.assert_called_once()
                 context.close.assert_called_once()
+                browser.close.assert_called_once()
 
     def test_browser_import_error_does_not_expose_values(self):
         context = MagicMock()
         playwright = MagicMock()
-        playwright.chromium.launch_persistent_context.return_value = context
+        browser = playwright.chromium.launch.return_value
+        browser.new_context.return_value = context
         context.add_cookies.side_effect = app.BrowserError("private-test-value")
-        args = argparse.Namespace(profile=Path("test-profile"), visible=False)
+        args = argparse.Namespace(visible=False)
         with self.assertRaises(app.SessionRequired) as error:
             app.monitor(playwright, args, app.search_url(), cookies=[])
         self.assertNotIn("private-test-value", str(error.exception))
         context.close.assert_called_once()
+        browser.close.assert_called_once()
 
     def test_cookie_path_uses_environment_and_loads_project_dotenv(self):
         with patch.dict(os.environ, {"LINKEDIN_COOKIES_FILE": "missing.json"}), \
