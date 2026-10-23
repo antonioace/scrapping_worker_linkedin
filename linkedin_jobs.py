@@ -362,7 +362,7 @@ def arguments():
                         help="No abre login automáticamente; requiere un perfil autenticado o --cookies-file.")
     parser.add_argument("--cookies-file", type=Path,
                         help="JSON privado de cookies de LinkedIn. También LINKEDIN_COOKIES_FILE. Evita el login interactivo.")
-    parser.add_argument("--interval", type=int, default=300, help="Segundos entre consultas; predeterminado: 300.")
+    parser.add_argument("--interval", type=int, default=900, help="Segundos entre consultas; predeterminado: 900 (15 minutos).")
     parser.add_argument("--max-pages", type=int, default=3, help="Máximo de páginas por consulta (25 posiciones por página).")
     parser.add_argument("--keywords", default="developer react")
     parser.add_argument("--location", default="Colombia")

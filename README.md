@@ -3,7 +3,7 @@
 Guía paso a paso para ejecutar y probar los tres proyectos:
 [GUIA_PRUEBAS.md](https://github.com/antonioace/scraping_jobs_backend/blob/main/GUIA_PRUEBAS.md).
 
-Script en Python con Playwright. Consulta LinkedIn cada **300 segundos (5 minutos)**
+Script en Python con Playwright. Consulta LinkedIn cada **900 segundos (15 minutos)**
 y genera reportes locales. Usa tu propia sesión, guardada en un perfil exclusivo de
 este proyecto, o importada desde un JSON privado de cookies; no requiere escribir
 contraseñas ni cookies en el código.
@@ -152,7 +152,7 @@ python -m venv .venv
 # Abre Chromium: ingresa tú y completa la verificación del celular.
 .\.venv\Scripts\python.exe linkedin_jobs.py --login
 
-# Primer reporte inmediato y luego uno cada cinco minutos, en headless.
+# Primer reporte inmediato y luego uno cada quince minutos, en headless.
 .\.venv\Scripts\python.exe linkedin_jobs.py
 ```
 
@@ -206,7 +206,7 @@ promete cubrir todas las ofertas ni los cambios que ocurran entre consultas.
 No descarga descripciones completas ni presenta solicitudes.
 
 El proceso debe permanecer ejecutándose y el equipo encendido y conectado.
-Los cinco minutos se cuentan entre inicios de consulta; si una consulta tarda
+Los quince minutos se cuentan entre inicios de consulta; si una consulta tarda
 más, la siguiente comienza al terminar. Los errores transitorios aplican espera
 creciente y el proceso se detiene tras tres fallos consecutivos. HTTP 403/429 o
 verificación detienen el monitor inmediatamente.
@@ -220,8 +220,8 @@ verificación detienen el monitor inmediatamente.
 # Ver qué está mostrando LinkedIn durante una consulta.
 .\.venv\Scripts\python.exe linkedin_jobs.py --once --visible
 
-# Ampliar la cantidad de páginas y consultar cada diez minutos.
-.\.venv\Scripts\python.exe linkedin_jobs.py --max-pages 5 --interval 600
+# Ampliar la cantidad de páginas y consultar cada treinta minutos.
+.\.venv\Scripts\python.exe linkedin_jobs.py --max-pages 5 --interval 1800
 
 # Ver todas las opciones.
 .\.venv\Scripts\python.exe linkedin_jobs.py --help
