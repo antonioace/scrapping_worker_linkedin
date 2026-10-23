@@ -9,7 +9,11 @@ este proyecto; no requiere escribir contraseñas ni cookies en el código.
 Este proyecto tiene `Dockerfile` y `docker-compose.yml` propios. Usa la red externa
 `web` ya existente y arranca después del backend en la misma máquina.
 Copia `.env.example` a `.env`, usa `JOBS_API_URL=http://job-tracker-api:8000` y el mismo
-`JOBS_INGEST_TOKEN` del backend. No necesita credenciales Firebase Admin.
+`JOBS_INGEST_TOKEN` del backend. Esas son las únicas variables de aplicación que
+necesita este proyecto. No necesita claves VAPID, Firebase Admin, conexión a
+PostgreSQL ni contraseña de LinkedIn en `.env`. La sesión se guarda mediante login.
+Los `.env` privados no se publican en GitHub: al clonar en Linux debes crearlos
+o copiarlos de forma privada. Conserva el mismo token en backend y worker.
 
 ```bash
 docker compose build worker login
@@ -38,6 +42,12 @@ Guía completa:
 Los Compose son independientes y no se incluyen workflows de GitHub Actions.
 
 ## Preparación (PowerShell, Python 3.10 o superior)
+
+Docker Compose carga `.env` automáticamente. Al ejecutar Python directamente,
+exporta `JOBS_API_URL` y `JOBS_INGEST_TOKEN` en la terminal (ver la sección de
+sincronización con la API); el script no carga `.env` por sí solo. Fuera de Docker,
+usa una URL accesible desde ese equipo, por ejemplo `http://127.0.0.1:8000`, en
+lugar del alias Docker `job-tracker-api`.
 
 Desde esta carpeta:
 
