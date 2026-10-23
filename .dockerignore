@@ -1,0 +1,9 @@
+# Browser profiles, reports, local environments and credentials are not inputs.
+*
+!Dockerfile
+!.dockerignore
+!requirements.txt
+!api_sync.py
+!linkedin_jobs.py
+!docker/
+!docker/login.py

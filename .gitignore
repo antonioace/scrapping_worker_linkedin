@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.linkedin-profile/
+data/
+reports/
+.env
+.env.*
+!.env.example
+secrets/
+*-adminsdk-*.json
+*service-account*.json
+*.pem
+*.key

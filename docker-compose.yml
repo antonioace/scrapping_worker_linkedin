@@ -1,0 +1,35 @@
+services:
+  worker:
+    build:
+      context: .
+      target: runtime
+    env_file:
+      - .env
+    init: true
+    shm_size: 1gb
+    stop_grace_period: 30s
+    restart: "no"
+    volumes:
+      - linkedin-data:/data
+    networks:
+      - jobs
+
+  login:
+    profiles: [login]
+    build:
+      context: .
+      target: login
+    init: true
+    shm_size: 1gb
+    ports:
+      - "127.0.0.1:6080:6080"
+    volumes:
+      - linkedin-data:/data
+
+volumes:
+  linkedin-data:
+
+networks:
+  jobs:
+    external: true
+    name: job-tracker
