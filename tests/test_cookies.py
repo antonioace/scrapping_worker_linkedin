@@ -68,7 +68,8 @@ class CookieImportTests(unittest.TestCase):
             context = browser.new_context.return_value
             context.cookies.return_value = [{"name": "li_at"}]
             args = argparse.Namespace(visible=False,
-                                      output=Path(folder) / "reports", api_url="", once=True, max_pages=1)
+                                      output=Path(folder) / "reports", api_url="", once=True, max_pages=1,
+                                      max_details=20, description_cache_hours=6)
             cookies = [{"name": "li_at", "value": "test-session", "domain": ".linkedin.com", "path": "/"}]
             with patch.object(app, "collect_jobs", return_value=([], False)) as collect:
                 app.monitor(playwright, args, app.search_url(), cookies=cookies)

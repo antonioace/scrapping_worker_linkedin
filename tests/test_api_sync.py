@@ -17,6 +17,7 @@ class ApiSyncTests(unittest.TestCase):
             conn = app.database(output / "jobs.sqlite3")
             try:
                 jobs = [{"id": "123", "title": "React Developer", "company": "Empresa",
+                         "description": "Desarrollar aplicaciones con React y TypeScript.",
                          "location": "Colombia", "published": "", "url": "https://www.linkedin.com/jobs/view/123/"}]
                 report = app.save_report(conn, output, app.search_url(), jobs, False, queue_sync=True)
                 queued = json.loads(conn.execute("SELECT payload FROM api_outbox").fetchone()[0])

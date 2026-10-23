@@ -110,6 +110,33 @@ No se incluyen contenedores PostgreSQL ni workflows de GitHub Actions.
 
 ## Filtros
 
+Antes de guardar o enviar una oferta se lee su descripción completa. Debe
+mencionar al menos una de estas tecnologías: **React, Next.js, Angular, Vue,
+SvelteKit, Express, NestJS o FastAPI**. Se aceptan variantes como ReactJS, Vue.js,
+Nest.js y Fast API, sin distinguir mayúsculas. Solo el título no es suficiente.
+TypeScript/JavaScript solos, o Python con Django/Flask sin otra tecnología de
+la lista, no pasan. React junto a Python sí pasa por la mención de React.
+No se distingue entre requisitos obligatorios, opcionales o menciones generales.
+
+Se consultan como máximo **20 descripciones por ciclo**, de forma secuencial.
+Las decisiones se reutilizan durante **6 horas**; los IDs descartados se guardan
+sin su descripción para evitar repetir consultas. Las ofertas todavía no leídas
+quedan pendientes y se revisan en ciclos posteriores. Las descripciones que no
+se pueden leer no se publican; si fallan todas las consultas nuevas y no hay
+caché utilizable, el ciclo se registra como error.
+Los cambios posteriores en una descripción pueden tardar hasta seis horas en
+volver a evaluarse; las ofertas nuevas se evalúan sin esperar ese plazo.
+
+Puedes ajustar los límites con `--max-details 10` y
+`--description-cache-hours 6`. El resumen de candidatas, aceptadas, descartadas,
+pendientes y caché aparece en consola, reportes y configuración del frontend.
+El backend repite el filtro antes de guardar y crear notificaciones.
+
+La búsqueda inicial conserva `developer react`. Este filtro selecciona dentro
+de los resultados encontrados; no amplía automáticamente la búsqueda a puestos
+que solo mencionen Angular, Vue o FastAPI. Usa `--keywords` para otra búsqueda.
+Las ofertas históricas existentes no se eliminan automáticamente.
+
 | Parámetro | Valor |
 |---|---|
 | `keywords` | `developer react` |
@@ -131,8 +158,8 @@ Cada consulta correcta guarda:
 
 - `reports/latest.md`: reporte legible con cargo, empresa, ubicación, publicación
   cuando esté disponible y enlace. Separa ofertas nuevas de las ya vistas.
-- `reports/latest.csv`: los mismos datos para abrir en Excel (UTF-8 con BOM).
-- `reports/latest.json`: datos estructurados, fecha de consulta y resumen.
+- `reports/latest.csv`: datos, descripción y tecnologías para Excel (UTF-8 con BOM).
+- `reports/latest.json`: datos estructurados, descripción, tecnologías y resumen.
 - `reports/history/AAAAMMDD_HHMMSS.json`: histórico de cada consulta correcta.
 - `reports/jobs.sqlite3`: memoria de ofertas por ID, que sobrevive a los reinicios.
 - `reports/status.json`: estado del último intento, incluidos fallos.
@@ -146,7 +173,7 @@ un fallo consulta `status.json` y la fecha del reporte para evitar confusiones.
 Por defecto se revisan hasta **3 páginas** (posiciones 0, 25 y 50), desplazando
 el panel para cargar tarjetas. El reporte indica si se alcanzó el límite; no
 promete cubrir todas las ofertas ni los cambios que ocurran entre consultas.
-No descarga descripciones completas ni presenta solicitudes.
+Lee las descripciones de los candidatos para aplicar el filtro; no presenta solicitudes.
 
 El proceso debe permanecer ejecutándose y el equipo encendido y conectado.
 Los quince minutos se cuentan entre inicios de consulta; si una consulta tarda

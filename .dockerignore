@@ -6,3 +6,5 @@
 !api_sync.py
 !linkedin_jobs.py
 !linkedin_cookies.py
+!job_details.py
+!stack_filter.py

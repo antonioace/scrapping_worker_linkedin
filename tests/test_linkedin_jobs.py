@@ -58,20 +58,23 @@ class ExtractionTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
+    def jobs(self, html):
+        return [dict(job, description="Experiencia con React y TypeScript.") for job in app.parse_jobs(html)]
+
     def test_new_jobs_survive_restart_and_csv_is_readable(self):
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder)
             dbpath = output / "jobs.sqlite3"
             conn = app.database(dbpath)
             try:
-                first = app.save_report(conn, output, app.search_url(), app.parse_jobs(AUTH_CARD), True)
+                first = app.save_report(conn, output, app.search_url(), self.jobs(AUTH_CARD), True)
                 self.assertEqual(first["new_count"], 1)
                 first_seen = first["jobs"][0]["first_seen"]
             finally:
                 conn.close()
             conn = app.database(dbpath)
             try:
-                second = app.save_report(conn, output, app.search_url(), app.parse_jobs(AUTH_CARD + PUBLIC_CARD), False)
+                second = app.save_report(conn, output, app.search_url(), self.jobs(AUTH_CARD + PUBLIC_CARD), False)
                 self.assertEqual(second["new_count"], 1)
                 self.assertFalse(second["jobs"][0]["new"])
                 self.assertEqual(second["jobs"][0]["first_seen"], first_seen)
@@ -89,7 +92,7 @@ class ReportTests(unittest.TestCase):
             try:
                 with patch.object(app, "atomic_write", side_effect=OSError("disco lleno")):
                     with self.assertRaises(OSError):
-                        app.save_report(conn, output, app.search_url(), app.parse_jobs(AUTH_CARD), False)
+                        app.save_report(conn, output, app.search_url(), self.jobs(AUTH_CARD), False)
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 0)
             finally:
                 conn.close()
@@ -101,7 +104,7 @@ class ReportTests(unittest.TestCase):
             try:
                 report = app.save_report(conn, output, app.search_url(), [], False)
                 self.assertEqual(report["total_found"], 0)
-                job = dict(app.parse_jobs(AUTH_CARD)[0], company="=malicious()")
+                job = dict(self.jobs(AUTH_CARD)[0], company="=malicious()")
                 app.save_report(conn, output, app.search_url(), [job], False)
                 self.assertIn("'=malicious()", (output / "latest.csv").read_text(encoding="utf-8-sig"))
             finally:
@@ -139,6 +142,11 @@ class BrowserTests(unittest.TestCase):
         jobs, limited = app.collect_jobs(self.page, app.search_url(), 1)
         self.assertEqual(jobs, [])
         self.assertFalse(limited)
+
+    def test_description_is_read_only_from_the_job_detail(self):
+        self.serve('<h1>React Developer</h1><div id="job-details"><p>Python y FastAPI.</p></div><footer>Angular</footer>')
+        text = app.read_job_description(self.page, {"id": "123", "url": "https://www.linkedin.com/jobs/view/123/"})
+        self.assertEqual(text, "Python y FastAPI.")
 
     def test_login_and_rate_limit_stop_collection(self):
         self.serve('<input id="username" name="session_key">')

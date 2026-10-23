@@ -29,6 +29,11 @@ from playwright.sync_api import sync_playwright
 
 from api_sync import enqueue, enqueue_existing_jobs, flush_outbox, init_outbox
 from linkedin_cookies import load_cookies
+from job_details import (
+    DESCRIPTION_SELECTOR, DescriptionUnavailable, JobGone, extract_description,
+    init_description_cache, select_jobs,
+)
+from stack_filter import matching_technologies
 
 ROOT = Path(__file__).resolve().parent
 BOGOTA = ZoneInfo("America/Bogota")
@@ -127,14 +132,41 @@ def session_needs_attention(page) -> bool:
     ).first.is_visible()
 
 
-def open_page(page, url):
+def open_page(page, url, *, missing_ok: bool = False) -> bool:
     response = page.goto(url, wait_until="domcontentloaded", timeout=60_000)
     if response and response.status in (403, 429):
         raise AccessBlocked(f"LinkedIn respondió HTTP {response.status}. Se detiene el monitor.")
     if response and response.status == 401:
         raise SessionRequired("LinkedIn rechazó la sesión de cookies. Actualiza tu JSON privado.")
+    if response and response.status in (404, 410) and missing_ok:
+        return False
     if response and response.status >= 400:
         raise RuntimeError(f"LinkedIn respondió HTTP {response.status}.")
+    return True
+
+
+def read_job_description(page, job: dict) -> str:
+    try:
+        if not open_page(page, job["url"], missing_ok=True):
+            raise JobGone("La oferta ya no está disponible.")
+        page.wait_for_function(
+            """selectors => [...document.querySelectorAll(selectors)].some(el => el.textContent.trim())
+                || [...document.querySelectorAll('script[type="application/ld+json"]')]
+                    .some(el => el.textContent.includes('JobPosting') && el.textContent.includes('description'))
+                || /\\/(login|checkpoint|authwall|challenge)(\\/|$)/.test(location.pathname)
+                || !!document.querySelector('input#username, input[name="session_key"]')""",
+            arg=DESCRIPTION_SELECTOR, timeout=15_000,
+        )
+    except BrowserTimeout:
+        if session_needs_attention(page):
+            raise SessionRequired("La sesión de cookies necesita verificación.") from None
+        raise DescriptionUnavailable("No se reconoció la descripción de la oferta.") from None
+    if session_needs_attention(page):
+        raise SessionRequired("La sesión de cookies necesita verificación.")
+    identity = re.search(r"/jobs/view/(?:[^/?]*-)?(\d+)(?:[/?#]|$)", page.url)
+    if identity and identity.group(1) != job["id"]:
+        raise DescriptionUnavailable("LinkedIn redirigió a una oferta distinta; no se usará esa descripción.")
+    return extract_description(page.content(), job["id"])
 
 
 def wait_results(page) -> None:
@@ -207,6 +239,7 @@ def database(path: Path) -> sqlite3.Connection:
         last_seen TEXT NOT NULL, payload TEXT NOT NULL
     )""")
     init_outbox(conn)
+    init_description_cache(conn)
     conn.commit()
     return conn
 
@@ -229,7 +262,9 @@ def markdown_text(value: str) -> str:
 
 
 def save_report(conn, output: Path, url: str, jobs: list[dict], limited: bool,
-                queue_sync: bool = False) -> dict:
+                queue_sync: bool = False, message: str = "") -> dict:
+    jobs = [dict(job, technologies=matching_technologies(job.get("description", "")))
+            for job in jobs if matching_technologies(job.get("description", ""))]
     checked = now()
     seen = dict(conn.execute("SELECT id, first_seen FROM jobs"))
     enriched = [dict(job, new=job["id"] not in seen,
@@ -237,14 +272,16 @@ def save_report(conn, output: Path, url: str, jobs: list[dict], limited: bool,
     new_jobs = [job for job in enriched if job["new"]]
     report = {"run_id": str(uuid4()), "checked_at": checked, "status": "ok", "search_url": url,
               "total_found": len(enriched), "new_count": len(new_jobs),
-              "page_limit_reached": limited, "jobs": enriched}
+              "page_limit_reached": limited, "message": message, "jobs": enriched}
     lines = ["# Ofertas de LinkedIn", "", f"Consulta: {checked} (Colombia)", "",
              f"[Abrir búsqueda]({url})", "",
              f"**{len(enriched)} ofertas encontradas · {len(new_jobs)} nuevas**", ""]
     if limited:
-        lines += ["Se alcanzó el máximo de páginas configurado; puede haber más resultados.", ""]
+        lines += ["La evaluación fue parcial: se alcanzó un límite o quedaron descripciones pendientes.", ""]
+    if message:
+        lines += [message, ""]
     if not jobs:
-        lines += ["LinkedIn mostró la búsqueda sin resultados.", ""]
+        lines += ["No hay ofertas que cumplan el filtro de tecnologías en esta consulta.", ""]
     for title, subset in (("Nuevas", new_jobs), ("Ya vistas", [job for job in enriched if not job["new"]])):
         if subset:
             lines += [f"## {title}", "", "| Cargo | Empresa | Ubicación | Publicación |", "|---|---|---|---|"]
@@ -254,12 +291,14 @@ def save_report(conn, output: Path, url: str, jobs: list[dict], limited: bool,
                 lines.append("| " + " | ".join(cells) + " |")
             lines.append("")
     csv_buffer = io.StringIO(newline="")
-    fields = ["id", "title", "company", "location", "published", "url", "new", "first_seen", "last_seen"]
+    fields = ["id", "title", "company", "location", "published", "description", "technologies", "url", "new", "first_seen", "last_seen"]
     writer = csv.DictWriter(csv_buffer, fieldnames=fields)
     writer.writeheader()
     for job in enriched:
+        values = {key: job.get(key, "") for key in fields}
+        values["technologies"] = ", ".join(job["technologies"])
         writer.writerow({key: ("'" + value if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")) else value)
-                         for key, value in job.items()})
+                         for key, value in values.items()})
     payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     stamp = datetime.fromisoformat(checked).strftime("%Y%m%d_%H%M%S")
     atomic_write(output / "history" / f"{stamp}.json", payload)
@@ -292,13 +331,20 @@ def monitor(playwright, args, url: str, cookies: list[dict]) -> None:
         if not any(c["name"] == "li_at" for c in context.cookies("https://www.linkedin.com")):
             raise SessionRequired("No se encontró una cookie li_at aplicable a www.linkedin.com. Revisa tu JSON privado.")
         page = context.new_page()
+        detail_page = context.new_page()
         with closing(database(args.output / "jobs.sqlite3")) as conn:
             failures = 0
             while True:
                 started = time.monotonic()
                 try:
                     jobs, limited = collect_jobs(page, url, args.max_pages)
-                    report = save_report(conn, args.output, url, jobs, limited, queue_sync=bool(args.api_url))
+                    jobs, incomplete, summary = select_jobs(
+                        conn, jobs, lambda job: read_job_description(detail_page, job),
+                        max_details=args.max_details, cache_seconds=args.description_cache_hours * 3600,
+                    )
+                    LOG.info("Filtro de tecnologías: %s", summary)
+                    report = save_report(conn, args.output, url, jobs, limited or incomplete,
+                                         queue_sync=bool(args.api_url), message=summary)
                     if args.api_url:
                         flush_outbox(conn, args.api_url, args.api_token)
                     failures = 0
@@ -346,6 +392,8 @@ def arguments():
                         help="JSON privado de cookies. Predeterminado: linkedin.cookies.json; también LINKEDIN_COOKIES_FILE.")
     parser.add_argument("--interval", type=int, default=900, help="Segundos entre consultas; predeterminado: 900 (15 minutos).")
     parser.add_argument("--max-pages", type=int, default=3, help="Máximo de páginas por consulta (25 posiciones por página).")
+    parser.add_argument("--max-details", type=int, default=20, help="Máximo de consultas de descripción por ciclo; predeterminado: 20.")
+    parser.add_argument("--description-cache-hours", type=int, default=6, help="Horas antes de volver a evaluar una descripción; predeterminado: 6.")
     parser.add_argument("--keywords", default="developer react")
     parser.add_argument("--location", default="Colombia")
     parser.add_argument("--output", type=Path, default=ROOT / "reports")
@@ -354,8 +402,8 @@ def arguments():
     parser.add_argument("--sync-only", action="store_true",
                         help="Envía las ofertas ya guardadas a la API sin abrir Chromium.")
     args = parser.parse_args()
-    if args.interval < 60 or args.max_pages < 1:
-        parser.error("--interval debe ser >= 60 y --max-pages debe ser >= 1.")
+    if args.interval < 60 or min(args.max_pages, args.max_details, args.description_cache_hours) < 1:
+        parser.error("--interval debe ser >= 60; --max-pages, --max-details y --description-cache-hours deben ser >= 1.")
     args.api_url = args.api_url.strip().rstrip("/")
     args.api_token = os.environ.get("JOBS_INGEST_TOKEN", "")
     if args.api_url:
